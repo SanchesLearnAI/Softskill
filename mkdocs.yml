@@ -1,8 +1,8 @@
 site_name: SoftSkill Documentation
-site_url: https://xijia-tao.github.io/SoftSkill
+site_url: https://sancheslearnai.github.io/Softskill
 site_description: "SoftSkill: soft-prefix skill optimization with SkillOpt-compatible imports"
-repo_url: https://github.com/xijia-tao/SoftSkill
-repo_name: xijia-tao/SoftSkill
+repo_url: https://github.com/SanchesLearnAI/Softskill
+repo_name: SanchesLearnAI/Softskill
 
 theme:
   name: material
@@ -37,6 +37,7 @@ theme:
 
 nav:
   - Home: index.md
+  - Undergraduate Exploration: undergraduate_exploration.md
   - Soft-Prefix Workflow: guide/softskill.md
   - Add a New Benchmark: guide/new-benchmark.md
   - Release Boundary: release.md

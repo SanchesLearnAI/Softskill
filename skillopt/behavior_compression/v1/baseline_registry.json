@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "primary_metric": {
+    "searchqa": "soft",
+    "livemath": "hard",
+    "docvqa": "soft"
+  },
+  "independent_32": {
+    "description": "Original per-task independent 1x32 SoftSkill, mean over seeds 1, 2, and 3.",
+    "source": "research_status_full_2026-08-03.md section 6.1",
+    "metrics": {
+      "searchqa": {"hard": 0.7600, "soft": 0.8371},
+      "livemath": {"hard": 0.6720, "soft": 0.6720},
+      "docvqa": {"hard": 0.7807, "soft": 0.8931}
+    }
+  },
+  "v2_mean_shared_seed1": {
+    "description": "Existing v2-D norm-calibrated positionwise mean Shared16+Task16 with matched residual, seed1.",
+    "source": "outputs/v2/four_cell/D_shared16_task16_residual/seed1/summary.json",
+    "metrics": {
+      "searchqa": {"hard": 0.7550, "soft": 0.8361020408163256},
+      "livemath": {"hard": 0.6612903225806451, "soft": 0.6612903225806451},
+      "docvqa": {"hard": 0.7941176470588235, "soft": 0.9026942816129981}
+    }
+  }
+}

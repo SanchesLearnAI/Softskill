@@ -122,6 +122,7 @@ class SoftPrefixSettings:
     model_name: str
     architecture: str = "auto"
     prefix_length: int = 32
+    num_soft_skills: int = 2
     learning_rate: float = 1e-3
     weight_decay: float = 0.0
     max_prompt_tokens: int = 2048
@@ -164,6 +165,7 @@ class SoftPrefixSettings:
             model_name=str(cfg["model_name"]),
             architecture=str(cfg.get("architecture", "auto")),
             prefix_length=_parse_prefix_length(cfg.get("prefix_length", 32)),
+            num_soft_skills=int(cfg.get("num_soft_skills", 2)),
             learning_rate=float(cfg.get("learning_rate", 1e-3)),
             weight_decay=float(cfg.get("weight_decay", 0.0)),
             max_prompt_tokens=int(cfg.get("max_prompt_tokens", 2048)),
@@ -2576,6 +2578,7 @@ def _build_prefix_model(env: str, settings: SoftPrefixSettings, init_text: str) 
     return model_cls(
         settings.model_name,
         prefix_length=settings.prefix_length,
+        num_soft_skills=settings.num_soft_skills,
         init_text=init_text,
         init_strategy=settings.init_strategy,
         torch_dtype=settings.torch_dtype,
@@ -2765,7 +2768,11 @@ def _build_vllm_eval_generator(prefix_model: Any, settings: SoftPrefixSettings, 
         settings.inference_base_url,
         timeout_seconds=settings.inference_timeout_seconds,
     )
-    prefix = prefix_model.prefix_embeddings[:0].detach() if plain else prefix_model.prefix_embeddings
+    prefix = prefix_model.prefix_embeddings.detach()
+    if prefix.dim() == 3:
+        prefix = prefix.flatten(0, 1)
+    if plain:
+        prefix = prefix[:0]
     generator.set_prefix(prefix, injection_position=settings.injection_position)
     return generator
 

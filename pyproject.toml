@@ -5,12 +5,15 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "softskill"
 version = "0.1.0"
-description = "SoftSkill: soft-prefix skill optimization with SkillOpt-compatible imports"
+description = "Undergraduate exploratory SoftSkill reproduction and shared-prefix extension"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
 authors = [
-    {name = "SoftSkill contributors"},
+    {name = "See AUTHORS.md for upstream and derivative credits"},
+]
+maintainers = [
+    {name = "Yanbing (@SanchesLearnAI)"},
 ]
 keywords = ["agent", "prompt-optimization", "soft-prefix", "skill-learning", "LLM", "agentic"]
 classifiers = [
@@ -56,10 +59,10 @@ skillopt-eval = "scripts.eval_only:main"
 skillopt-train-soft-prefix = "scripts.train_soft_prefix:main"
 
 [project.urls]
-Homepage = "https://github.com/xijia-tao/SoftSkill"
-Documentation = "https://xijia-tao.github.io/SoftSkill"
-Repository = "https://github.com/xijia-tao/SoftSkill"
-Issues = "https://github.com/xijia-tao/SoftSkill/issues"
+Homepage = "https://github.com/SanchesLearnAI/Softskill"
+Documentation = "https://sancheslearnai.github.io/Softskill"
+Repository = "https://github.com/SanchesLearnAI/Softskill"
+Issues = "https://github.com/SanchesLearnAI/Softskill/issues"
 
 [tool.setuptools.packages.find]
 include = ["skillopt*", "scripts*"]

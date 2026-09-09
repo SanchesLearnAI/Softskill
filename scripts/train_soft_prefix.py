@@ -213,7 +213,10 @@ def main() -> None:
     print(f"  env:          {flat_cfg.get('env')}")
     print(f"  model:        {adapter_cfg.get('model_name')}")
     if training_method == "soft_prefix":
-        print(f"  prefix_len:   {adapter_cfg.get('prefix_length')}")
+        num_soft_skills = int(adapter_cfg.get("num_soft_skills", 2))
+        prefix_length = adapter_cfg.get("prefix_length")
+        print(f"  soft_skills:  {num_soft_skills}")
+        print(f"  prefix_len:   {prefix_length} each ({num_soft_skills} x {prefix_length} total)")
     else:
         print(f"  lora_r:       {adapter_cfg.get('r')}")
         print(f"  lora_alpha:   {adapter_cfg.get('alpha')}")

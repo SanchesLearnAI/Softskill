@@ -1,0 +1,160 @@
+{
+  "schema_version": 1,
+  "phase": "new_task_transfer_stage1_data_adaptation_and_evaluation",
+  "seed": 1,
+  "tasks": {
+    "chartqa": {
+      "schema_version": 1,
+      "task": "chartqa",
+      "source": "https://github.com/vis-nlp/ChartQA",
+      "local_path": "<SOFTSKILL_PROJECT_ROOT>/data/chartqa/ChartQA Dataset",
+      "splits": {
+        "train": {
+          "source_split": "train",
+          "path": "<SOFTSKILL_PROJECT_ROOT>/data/chartqa/ChartQA Dataset/train/train_human.json",
+          "sha256": "4eaaa03e406dbbbe43caff925dbec9930b87fadba960f1c2ab30a5def287c384",
+          "source_samples": 7398,
+          "selected_samples": 7398,
+          "selected_ids_sha256": "e1d964f4228d8854902f0924298a3d7cde61a525f90bb5cfba4bbb56e4c076e1"
+        },
+        "validation": {
+          "source_split": "val",
+          "path": "<SOFTSKILL_PROJECT_ROOT>/data/chartqa/ChartQA Dataset/val/val_human.json",
+          "sha256": "e297ce5b38b4ab79bd0e22a93eb19a65cb89f9bd07ce886cb78f2e333fb0ba14",
+          "source_samples": 960,
+          "selected_samples": 960,
+          "selected_ids_sha256": "07a1d2342f8cd4a79e4b483cc2db40c6a6174e831d0aef41b2e02a67dcca10bc"
+        },
+        "test": {
+          "source_split": "test",
+          "path": "<SOFTSKILL_PROJECT_ROOT>/data/chartqa/ChartQA Dataset/test/test_human.json",
+          "sha256": "5fba61b508a96b85cd5906bb14adfc1ba552bdcf88ac568ed6e2f79dcf0460b7",
+          "source_samples": 1250,
+          "selected_samples": 1250,
+          "selected_ids_sha256": "a629ae9da790fca599d2887532e5d31513761e167032fff15abcd849ac7694e5"
+        }
+      },
+      "filtering": {
+        "human_authored_only": true,
+        "annotation_pattern": "{split}_human.json",
+        "csv_or_bbox_inputs": false
+      },
+      "selection": {
+        "seed": 1,
+        "policy": "seeded Python random shuffle of official human train, then first K; official human validation and test remain complete",
+        "requested_train_size": null
+      },
+      "direct_overlap_counts": {
+        "train_validation": 0,
+        "train_test": 0,
+        "validation_test": 0
+      },
+      "prompt": {
+        "modalities": [
+          "question",
+          "image"
+        ],
+        "message_order": "question_then_image",
+        "enable_thinking": false
+      },
+      "metrics": [
+        "chartqa_relaxed_accuracy_5pct"
+      ],
+      "answer_category_counts": {
+        "train": {
+          "numeric": 5100,
+          "string": 2298
+        },
+        "validation": {
+          "numeric": 648,
+          "string": 312
+        },
+        "test": {
+          "numeric": 835,
+          "string": 415
+        }
+      }
+    },
+    "drop": {
+      "schema_version": 1,
+      "task": "drop",
+      "source": "https://allennlp.org/drop",
+      "local_path": "<SOFTSKILL_PROJECT_ROOT>/data/drop/raw/drop_dataset",
+      "splits": {
+        "train": {
+          "source_split": "train",
+          "path": "<SOFTSKILL_PROJECT_ROOT>/data/drop/raw/drop_dataset/drop_dataset_train.json",
+          "sha256": "6b057fc18cc969e2c548aa6e3b891d1d9ff5930cb3beee90f0e30610fd53724b",
+          "source_samples": 77409,
+          "usable_answer_samples": 77400,
+          "post_filter_samples": 77399,
+          "selected_samples": 77399,
+          "selected_ids_sha256": "d0d8427528a0f002d5d0a39b877a6e54a7ebbcfd14bf002b9ede62ac840762a0"
+        },
+        "validation": {
+          "source_split": "dev",
+          "path": "<SOFTSKILL_PROJECT_ROOT>/data/drop/raw/drop_dataset/drop_dataset_dev.json",
+          "sha256": "f25f09a9e939e946dbb37799b3b3e2c2a9f7416e524017cc4a79780f2ba6edca",
+          "source_samples": 9536,
+          "usable_answer_samples": 9536,
+          "post_filter_samples": 9536,
+          "selected_samples": 9536,
+          "selected_ids_sha256": "fd5601d9b7f6a67b1030a412666d44fb76882ab34b349dffb5227c6a464a6ad0"
+        }
+      },
+      "filtering": {
+        "answer_forms_retained": [
+          "number",
+          "date",
+          "single-span",
+          "multi-span"
+        ],
+        "excluded_train_rows_without_any_nonempty_gold_answer": 9,
+        "excluded_train_rows_matching_validation_passage_and_question": 1,
+        "validation_unchanged": true
+      },
+      "selection": {
+        "seed": 1,
+        "policy": "exclude direct validation duplicates, seeded Python random shuffle of remaining official train, then first K; official dev stays complete",
+        "requested_train_size": null
+      },
+      "direct_overlap_counts": {
+        "train_validation_content": 0,
+        "train_validation_query_id": 0
+      },
+      "answer_type_counts": {
+        "train": {
+          "date": 1232,
+          "multi-span": 4698,
+          "number": 46972,
+          "single-span": 24497
+        },
+        "validation": {
+          "date": 157,
+          "multi-span": 567,
+          "number": 5850,
+          "single-span": 2962
+        }
+      },
+      "prompt": {
+        "modalities": [
+          "passage",
+          "question"
+        ],
+        "message_order": "passage_then_question",
+        "enable_thinking": false,
+        "multi_span_output": "JSON string list inside <answer> tags"
+      },
+      "metrics": [
+        "drop_exact_match",
+        "drop_f1"
+      ]
+    }
+  },
+  "excluded_from_this_phase": [
+    "F0/F1/I32 implementation",
+    "Shared Prefix checkpoint loading",
+    "150-step training",
+    "HPC job submission"
+  ]
+}

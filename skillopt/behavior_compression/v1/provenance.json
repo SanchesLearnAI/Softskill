@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "audit_date": "2026-08-05",
+  "status": "train_only_not_confirmed_validation_selection_present",
+  "conclusion": "The three reference Markdown artifacts cannot be certified as train-only from the released repository. The current SkillOpt generation pipeline evaluates candidate skills on valid_seen and uses that score for acceptance and best-skill selection. Treat behavior-initialized results as validation-influenced exploratory evidence, not as a final leakage-free conclusion.",
+  "test_feedback": {
+    "status": "not_found_but_not_provably_absent",
+    "note": "No repository evidence was found that valid_unseen/test feedback generated these artifacts. Missing generation logs prevent a proof of absence."
+  },
+  "repository_evidence": {
+    "artifact_commit": "e882951c7047f6792a537ce651fe3f1072079aa3",
+    "artifact_commit_date": "2026-06-22T03:45:02Z",
+    "artifact_commit_subject": "Initial commit",
+    "generation_logs_committed": false,
+    "release_policy": "docs/release.md retains ckpt reference Markdown but excludes outputs, rollouts, and logs.",
+    "selection_pipeline": "skillopt/engine/trainer.py builds valid_seen selection environments and gates candidate acceptance/best-skill selection on their scores."
+  },
+  "source_artifacts": {
+    "searchqa": {
+      "path": "ckpt/searchqa/gpt5.5_skill.md",
+      "git_blob_sha1": "b58d10acf71a5a34a31e8821e0f43d2919eaa59d"
+    },
+    "livemath": {
+      "path": "ckpt/livemath/gpt5.5_skill.md",
+      "git_blob_sha1": "2d1ac842841f771f4867aea5bfb2fc257fa806d3"
+    },
+    "docvqa": {
+      "path": "ckpt/docvqa/gpt5.5_skill.md",
+      "git_blob_sha1": "476992fc1883b239b9dbca3d9498306a538c4bd9"
+    }
+  },
+  "factorization": {
+    "method": "manual_deterministic_behavior_decomposition",
+    "literal_overlap_or_embedding_mean": false,
+    "generated_files": [
+      "shared_behavior.md",
+      "searchqa_behavior.md",
+      "livemath_behavior.md",
+      "docvqa_behavior.md"
+    ]
+  }
+}

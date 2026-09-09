@@ -17,6 +17,7 @@ evaluation:
 
 soft_prefix:
   model_name: Qwen/Qwen3.5-4B
+  num_soft_skills: 2
   prefix_length: 32
   learning_rate: 0.001
   weight_decay: 0.0

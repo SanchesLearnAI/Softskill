@@ -5,8 +5,8 @@ Thank you for your interest in contributing. SoftSkill welcomes focused fixes, d
 ## Getting Started
 
 ```bash
-git clone https://github.com/xijia-tao/SoftSkill.git
-cd SoftSkill
+git clone https://github.com/SanchesLearnAI/Softskill.git
+cd Softskill
 pip install -e ".[dev,softprefix]"
 ```
 
@@ -48,3 +48,6 @@ mkdocs serve
 ## License
 
 By contributing, you agree your contributions are licensed under the MIT License.
+Do not remove upstream attribution, `PROVENANCE.md`, `CODE_PROVENANCE.csv`, or
+third-party notices. Describe whether each contribution modifies an upstream file or
+adds a new local research component.

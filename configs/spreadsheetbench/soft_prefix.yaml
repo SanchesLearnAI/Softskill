@@ -34,6 +34,7 @@ env:
   workers: 8
 
 soft_prefix:
+  num_soft_skills: 2
   inference_backend: vllm_prompt_embeds
   inference_base_url: http://127.0.0.1:8000
   inference_timeout_seconds: 600

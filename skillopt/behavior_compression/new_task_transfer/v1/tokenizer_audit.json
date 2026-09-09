@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "model_name": "Qwen/Qwen3.5-4B",
+  "tokenizer": "Qwen/Qwen3.5-4B",
+  "add_special_tokens": false,
+  "selected_length": 16,
+  "files": {
+    "chartqa_behavior.md": {
+      "raw_text": "Read axes, legends, colors and scales; locate values, compare or calculate.",
+      "source_token_ids": [4274, 23964, 11, 46716, 11, 7736, 321, 27477, 26, 23748, 2663, 11, 9150, 466, 10724, 13],
+      "source_token_count": 16,
+      "selected_token_ids": [4274, 23964, 11, 46716, 11, 7736, 321, 27477, 26, 23748, 2663, 11, 9150, 466, 10724, 13],
+      "selected_token_count": 16,
+      "selected_text": "Read axes, legends, colors and scales; locate values, compare or calculate.",
+      "repeated": false,
+      "truncated": false
+    },
+    "drop_behavior.md": {
+      "raw_text": "Find events and quantities; resolve references, count or calculate, return exact spans.",
+      "source_token_ids": [9592, 4216, 321, 31591, 26, 8563, 14619, 11, 1698, 466, 10724, 11, 460, 4581, 42824, 13],
+      "source_token_count": 16,
+      "selected_token_ids": [9592, 4216, 321, 31591, 26, 8563, 14619, 11, 1698, 466, 10724, 11, 460, 4581, 42824, 13],
+      "selected_token_count": 16,
+      "selected_text": "Find events and quantities; resolve references, count or calculate, return exact spans.",
+      "repeated": false,
+      "truncated": false
+    }
+  }
+}

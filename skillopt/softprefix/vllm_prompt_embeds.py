@@ -432,6 +432,8 @@ class SoftPrefixVllmClient:
     def set_prefix(self, prefix_embeddings: Any, *, injection_position: str | None = None) -> None:
         if hasattr(prefix_embeddings, "detach"):
             tensor = prefix_embeddings.detach().float().cpu()
+            if tensor.ndim == 3:
+                tensor = tensor.flatten(0, 1)
             if tensor.ndim == 2 and tensor.shape[0] == 0:
                 prefix_embeddings = []
             else:
@@ -659,6 +661,8 @@ class SoftPrefixVllmEngine:
             tensor = self.torch.empty((0, hidden), dtype=dtype)
         else:
             tensor = self.torch.as_tensor(prefix_embeddings, dtype=dtype)
+            if tensor.ndim == 3:
+                tensor = tensor.flatten(0, 1)
             if tensor.ndim == 1 and tensor.numel() == 0:
                 tensor = tensor.reshape(0, hidden)
             elif tensor.ndim != 2:

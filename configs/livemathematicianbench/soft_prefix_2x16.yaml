@@ -1,0 +1,12 @@
+_base_: soft_prefix.yaml
+
+# Fixed 32-token budget: two independently trainable 16-token SoftSkills.
+# Keep the previously validated effective batch size of eight.
+train:
+  batch_size: 4
+  accumulation: 2
+
+soft_prefix:
+  num_soft_skills: 2
+  prefix_length: 16
+  injection_position: skill_section

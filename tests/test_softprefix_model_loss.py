@@ -97,3 +97,75 @@ def test_causal_prefix_can_be_inserted_at_batch_indices() -> None:
         [-100, -100, -100, 20, 21],
         [-100, -100, -100, -100, 22],
     ]
+
+
+def test_three_soft_skills_use_consecutive_markdown_embeddings_and_all_receive_gradients() -> None:
+    import torch
+
+    from skillopt.softprefix.model import SoftPrefixCausalLM
+
+    class FakeTokenizer:
+        def __call__(self, text, **kwargs):
+            del text, kwargs
+            return {"input_ids": torch.tensor([[1, 2, 3, 4, 5, 6]])}
+
+    class FakeBackbone(torch.nn.Module):
+        dtype = torch.float32
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.embedding = torch.nn.Embedding(16, 2)
+            self.lm_head = torch.nn.Linear(2, 16, bias=False)
+            with torch.no_grad():
+                values = torch.arange(32, dtype=torch.float32).reshape(16, 2)
+                self.embedding.weight.copy_(values)
+
+        def get_input_embeddings(self):
+            return self.embedding
+
+        def forward(self, *, inputs_embeds, attention_mask, **kwargs):
+            del attention_mask, kwargs
+            return SimpleNamespace(logits=self.lm_head(inputs_embeds.cumsum(dim=1)))
+
+    wrapper = SoftPrefixCausalLM.__new__(SoftPrefixCausalLM)
+    wrapper.torch = torch
+    wrapper.tokenizer = FakeTokenizer()
+    wrapper.model = FakeBackbone()
+    wrapper.device = torch.device("cpu")
+    wrapper.prefix_length = 2
+    wrapper.num_soft_skills = 3
+    wrapper.prefix_embeddings = torch.nn.Parameter(torch.empty(3, 2, 2))
+
+    wrapper.initialize_from_text("markdown skill")
+
+    expected = wrapper.model.embedding(torch.tensor([1, 2, 3, 4, 5, 6])).reshape(3, 2, 2)
+    assert torch.equal(wrapper.prefix_embeddings.detach(), expected.detach())
+    assert not torch.equal(wrapper.prefix_embeddings[0], wrapper.prefix_embeddings[1])
+
+    outputs = wrapper.forward(
+        {
+            "input_ids": torch.tensor([[7, 8]]),
+            "attention_mask": torch.tensor([[1, 1]]),
+            "labels": torch.tensor([[-100, 9]]),
+        }
+    )
+    outputs.loss.backward()
+
+    assert wrapper.prefix_embeddings.grad is not None
+    assert wrapper.prefix_embeddings.grad.shape == (3, 2, 2)
+    assert all(float(skill_grad.abs().sum()) > 0 for skill_grad in wrapper.prefix_embeddings.grad)
+
+
+def test_two_by_sixteen_uses_a_fixed_total_prefix_budget() -> None:
+    import torch
+
+    from skillopt.softprefix.model import SoftPrefixCausalLM
+
+    wrapper = SoftPrefixCausalLM.__new__(SoftPrefixCausalLM)
+    wrapper.torch = torch
+    wrapper.prefix_length = 16
+    wrapper.num_soft_skills = 2
+    wrapper.prefix_embeddings = torch.nn.Parameter(torch.zeros(2, 16, 8))
+
+    assert wrapper.prefix_embeddings.shape == (2, 16, 8)
+    assert wrapper.active_prefix_embeddings().shape == (32, 8)

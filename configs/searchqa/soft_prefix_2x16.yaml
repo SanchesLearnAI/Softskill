@@ -1,0 +1,7 @@
+_base_: soft_prefix.yaml
+
+# Fixed 32-token budget: two independently trainable 16-token SoftSkills.
+soft_prefix:
+  num_soft_skills: 2
+  prefix_length: 16
+  injection_position: skill_section

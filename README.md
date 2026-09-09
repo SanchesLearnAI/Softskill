@@ -1,10 +1,57 @@
-# SoftSkill: Behavioral Compression for Contextual Adaptation
+# SoftSkill Shared-Prefix Research Extension
+
+> [!IMPORTANT]
+> This is an undergraduate-stage exploratory reproduction and research-extension repository maintained by
+> [@SanchesLearnAI](https://github.com/SanchesLearnAI). It is based on the original
+> [SoftSkill repository](https://github.com/xijia-tao/SoftSkill) and paper by Xijia Tao
+> et al. It is not the official SoftSkill repository and does not claim authorship of
+> the original method, paper, upstream code, or upstream experimental results.
 
 [![arXiv](https://img.shields.io/badge/arXiv-2606.20333-b31b1b.svg)](https://arxiv.org/abs/2606.20333)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](pyproject.toml)
 
-**Behavioral compression for contextual adaptation.** SoftSkill turns a natural-language skill file into a compact, trainable soft prefix for a frozen language model. Instead of asking the model to re-read hundreds or thousands of Markdown tokens at inference time, SoftSkill learns a short latent context that biases the model toward the answer style, evidence-use habits, and task procedures that worked during supervision.
+**Original SoftSkill method.** SoftSkill turns a natural-language skill file into a compact, trainable soft prefix for a frozen language model. The description and paper-level results below summarize the upstream work and are retained for reproduction context.
+
+## Repository Provenance
+
+This derivative repository contains four clearly separated provenance classes:
+
+- **Upstream SoftSkill code:** files unchanged from upstream commit `4fc53008da110f354746bf36966dc0a2f44d3b92`.
+- **Locally adapted upstream files:** upstream files with uncommitted local modifications, including extensions to soft-prefix modeling, training, configuration, documentation, and tests.
+- **Local research additions:** files absent from the upstream commit, mainly shared/private prefix experiments, behavior-compression initialization, interventions, and ChartQA/DROP transfer experiments.
+- **Third-party vendored or adapted code:** Microsoft SkillOpt-derived modules, SkillRL-derived ALFWorld wrappers, and SpreadsheetBench-adapted evaluation code.
+
+See [PROVENANCE.md](PROVENANCE.md) for the interpretation rules,
+[CODE_PROVENANCE.csv](CODE_PROVENANCE.csv) for the per-file classification, and
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party sources. Git history
+and filesystem state establish whether a file is upstream, modified, or newly added;
+they do not by themselves prove the personal authorship of a local change.
+
+## Undergraduate Exploratory Practice
+
+This repository documents an exploratory practice carried out during undergraduate
+study. Its purpose is to learn how soft-prefix methods can be reproduced, modified,
+and evaluated. It is not an official implementation, a peer-reviewed contribution,
+or a claim that the upstream SoftSkill method was created in this project.
+
+The local exploration asks whether several tasks can share part of a fixed 32-token
+prefix while retaining task-specific capacity:
+
+- the experimental layout uses one trainable `Shared16` block and one `Task16` block
+  per task, keeping the inference length at 32 tokens;
+- the explored training schedule uses 30 shared-only warm-up optimizer steps followed
+  by 120 joint optimizer steps with the base model frozen;
+- for three tasks, the layout reduces the number of unique prefix vectors from
+  `3 × 32 = 96` to `16 + 3 × 16 = 64`;
+- additional exploratory code studies behavior-based initialization, prefix-state
+  interventions, and transfer to ChartQA and DROP.
+
+The current evidence does not isolate the effect of parameter sharing from behavior
+initialization and the two-stage training schedule. Similar performance under the
+combined setup therefore does not prove that sharing itself is effective, efficient,
+or generally transferable. See [docs/undergraduate_exploration.md](docs/undergraduate_exploration.md)
+for the presentation-derived project summary and limitations.
 
 <p align="center">
   <img src="docs/assets/softskill-teaser.png" alt="SoftSkill method overview" width="95%">
@@ -24,7 +71,7 @@ SoftSkill asks a simple question: **can useful task behavior be internalized int
 
 ## Repository Overview
 
-This repository contains the public training and evaluation stack used for the SoftSkill release:
+The upstream repository provides the public training and evaluation stack used for the SoftSkill release. This derivative retains that stack and adds local research extensions:
 
 - SoftSkill prefix training and validation-selected checkpoint export.
 - Prompt-embedding serving support for vLLM-style evaluation.
@@ -57,13 +104,17 @@ SoftSkill is strongest in the single-round QA setting in the paper. Agentic exec
 
 Generated rollouts, outputs, local corpora, model checkpoints, private environment files, and the separate `soft-skill/` paper repo are intentionally excluded from the public code release.
 
+Machine-specific Slurm launchers require `SOFTSKILL_PROJECT_ROOT`,
+`SOFTSKILL_WORKSPACE_ROOT`, and `SOFTSKILL_ACTIVATE`. Start from
+`scripts/experiments/hpc_env.example.sh`; keep real paths outside version control.
+
 ## Install
 
-Install the package in editable mode from a fresh checkout:
+Install the derivative repository in editable mode from a fresh checkout:
 
 ```bash
-git clone https://github.com/xijia-tao/SoftSkill.git
-cd SoftSkill
+git clone https://github.com/SanchesLearnAI/Softskill.git
+cd Softskill
 pip install -e .
 ```
 
@@ -156,7 +207,7 @@ See `data/README.md` for split counts, source revisions, and the lookup keys use
 
 ## Train a SoftSkill
 
-The SearchQA example trains a length-32 soft skill for `Qwen/Qwen3.5-4B` using the materialized split directory in `data/searchqa_split`. The backbone stays frozen; the output directory receives the learned skill checkpoints and training artifacts.
+The SearchQA example trains two length-32 soft skills together for `Qwen/Qwen3.5-4B` using the materialized split directory in `data/searchqa_split`. Both are initialized from consecutive token embeddings of the same Markdown skill, concatenated in the model context, and updated by the same next-token loss. The backbone stays frozen; the output directory receives the learned skill checkpoints and training artifacts.
 
 ```bash
 CONFIG=configs/searchqa/soft_prefix.yaml \
@@ -198,7 +249,12 @@ python scripts/eval_only.py \
 
 ## License and Attribution
 
-This project is released under the MIT License. It is derived from Microsoft [SkillOpt](https://github.com/microsoft/SkillOpt/), whose copyright notice is preserved in `LICENSE`.
+The upstream code is distributed under the MIT License, whose Microsoft copyright and permission notice are preserved verbatim in [LICENSE](LICENSE). This derivative also preserves attribution to the original SoftSkill paper/repository and Microsoft [SkillOpt](https://github.com/microsoft/SkillOpt/). Some subtrees contain additional third-party adaptations; consult [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before redistribution.
+
+Local modifications are offered under the same MIT terms only to the extent that the
+person publishing them has the right to do so. Repository metadata cannot establish
+employment, laboratory, sponsorship, or coauthor ownership; confirm those rights
+before making the repository public.
 
 ## Citation
 

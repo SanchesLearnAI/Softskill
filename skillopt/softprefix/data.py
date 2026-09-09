@@ -376,7 +376,7 @@ def build_livemath_target(tokenizer: Any, item: dict) -> str:
 
 
 def build_docvqa_messages(item: dict, *, image_detail: str = "auto") -> list[dict]:
-    """Build Qwen-VL DocVQA messages matching rollout text, without a markdown skill."""
+    """Build Qwen-VL DocVQA messages in the rollout's question-then-image order."""
     _messages, system, user = _build_docvqa_messages(item, "", image_detail)
     image_path = str(item.get("image_path", "")).strip()
     if not image_path:
@@ -386,8 +386,8 @@ def build_docvqa_messages(item: dict, *, image_detail: str = "auto") -> list[dic
         {
             "role": "user",
             "content": [
-                {"type": "image", "image": f"file://{os.path.abspath(image_path)}"},
                 {"type": "text", "text": user},
+                {"type": "image", "image": f"file://{os.path.abspath(image_path)}"},
             ],
         },
     ]
@@ -844,6 +844,7 @@ class DocVQAPrefixDataset:
             messages,
             tokenize=False,
             add_generation_prompt=True,
+            enable_thinking=False,
         )
         image_inputs, video_inputs = process_vision_info(
             messages,

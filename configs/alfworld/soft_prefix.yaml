@@ -36,6 +36,7 @@ env:
 
 
 soft_prefix:
+  num_soft_skills: 2
   model_name: Qwen/Qwen3.5-4B
   # prefix_length: number of soft-prefix tokens to train.
   # Set to "auto" to use the token count of the init_text_path document.

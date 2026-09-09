@@ -1,0 +1,5 @@
+# The configured SoftSkill environment already satisfies this dependency.
+# Used by both analyze_prefix_similarity.py and
+# analyze_prefix_state_trajectory.py. No pandas, scipy, sklearn, or plotting
+# library is required.
+torch>=2.1

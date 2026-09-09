@@ -51,16 +51,42 @@ def _initialize_prefix_from_vocab_mean(torch, model: Any, prefix_embeddings) -> 
         prefix_embeddings.copy_(vocab_mean.unsqueeze(0).expand_as(prefix_embeddings))
 
 
+def _flatten_prefix_embeddings(prefix_embeddings):
+    """Return all soft skills as one contiguous sequence of virtual tokens."""
+    if prefix_embeddings.dim() == 2:
+        return prefix_embeddings
+    if prefix_embeddings.dim() == 3:
+        return prefix_embeddings.flatten(0, 1)
+    raise ValueError(
+        "prefix_embeddings must have shape [prefix_length, hidden_size] or "
+        "[num_soft_skills, prefix_length, hidden_size]"
+    )
+
+
 def _masked_causal_lm_loss(torch, logits, labels):
     """Compute CE only for supervised target positions, avoiding full-logit fp32 upcast."""
     ignore_index = -100
     shift_labels = torch.nn.functional.pad(labels, (0, 1), value=ignore_index)[..., 1:]
+    if logits.shape[1] != shift_labels.shape[1]:
+        shift_labels = shift_labels[:, -logits.shape[1] :]
     active = shift_labels != ignore_index
     if not bool(active.any()):
         return logits.sum() * 0.0
     active_logits = logits[active].float()
     active_labels = shift_labels[active].to(active_logits.device)
     return torch.nn.functional.cross_entropy(active_logits, active_labels, ignore_index=ignore_index)
+
+
+def _logits_to_keep_from_labels(torch, labels) -> int:
+    """Return the smallest suffix of logits needed to score supervised labels."""
+    if labels is None or labels.ndim < 2:
+        return 0
+    active = labels != -100
+    if not bool(active.any()):
+        return 1
+    active_positions = active.nonzero(as_tuple=False)[:, 1]
+    first_logit_pos = max(int(active_positions.min().item()) - 1, 0)
+    return max(int(labels.shape[1]) - first_logit_pos, 1)
 
 
 class SoftPrefixCausalLM:
@@ -71,6 +97,7 @@ class SoftPrefixCausalLM:
         model_name: str,
         *,
         prefix_length: int,
+        num_soft_skills: int = 2,
         init_text: str = "",
         init_strategy: str = "text",
         torch_dtype: str = "auto",
@@ -108,6 +135,9 @@ class SoftPrefixCausalLM:
                 resolved_device = "cpu"
             self.model = AutoModelForCausalLM.from_pretrained(model_name, **model_kwargs).to(resolved_device)
 
+        if hasattr(self.model.config, "use_cache"):
+            self.model.config.use_cache = False
+
         self.model.eval()
         for param in self.model.parameters():
             param.requires_grad_(False)
@@ -116,9 +146,18 @@ class SoftPrefixCausalLM:
         # trainable prefix on the same device as the token embedding layer.
         self.device = self.model.get_input_embeddings().weight.device
         self.prefix_length = int(prefix_length)
+        self.num_soft_skills = int(num_soft_skills)
+        if self.num_soft_skills < 1:
+            raise ValueError("num_soft_skills must be >= 1")
         hidden_size = self.model.get_input_embeddings().embedding_dim
         self.prefix_embeddings = torch.nn.Parameter(
-            torch.empty(self.prefix_length, hidden_size, device=self.device, dtype=self.model.dtype)
+            torch.empty(
+                self.num_soft_skills,
+                self.prefix_length,
+                hidden_size,
+                device=self.device,
+                dtype=self.model.dtype,
+            )
         )
         torch.nn.init.normal_(self.prefix_embeddings, mean=0.0, std=0.02)
         init_strategy = init_strategy.strip().lower()
@@ -135,14 +174,20 @@ class SoftPrefixCausalLM:
     def trainable_parameters(self):
         return [self.prefix_embeddings]
 
+    def active_prefix_embeddings(self):
+        return _flatten_prefix_embeddings(self.prefix_embeddings)
+
     def state_dict(self) -> dict[str, Any]:
         return {
             "prefix_embeddings": self.prefix_embeddings.detach().cpu(),
             "prefix_length": self.prefix_length,
+            "num_soft_skills": self.num_soft_skills,
         }
 
     def load_state_dict(self, state: dict[str, Any]) -> None:
         value = state["prefix_embeddings"].to(device=self.device, dtype=self.prefix_embeddings.dtype)
+        if value.dim() == 2 and tuple(value.shape) == tuple(self.prefix_embeddings.shape[1:]):
+            value = value.unsqueeze(0).expand_as(self.prefix_embeddings).clone()
         if tuple(value.shape) != tuple(self.prefix_embeddings.shape):
             raise ValueError(
                 f"prefix shape mismatch: checkpoint {tuple(value.shape)} vs model {tuple(self.prefix_embeddings.shape)}"
@@ -151,25 +196,30 @@ class SoftPrefixCausalLM:
             self.prefix_embeddings.copy_(value)
 
     def initialize_from_text(self, text: str) -> None:
-        """Initialize prefix rows from token embeddings of a text seed."""
+        """Initialize all soft skills from consecutive token embeddings of one text seed."""
         encoded = self.tokenizer(text, add_special_tokens=False, return_tensors="pt")
         input_ids = encoded["input_ids"].to(self.device)
         if input_ids.numel() == 0:
             return
         with self.torch.no_grad():
             token_embeds = self.model.get_input_embeddings()(input_ids)[0].to(self.prefix_embeddings.dtype)
-            repeats = (self.prefix_length + token_embeds.shape[0] - 1) // token_embeds.shape[0]
-            tiled = token_embeds.repeat((repeats, 1))[: self.prefix_length]
-            self.prefix_embeddings.copy_(tiled)
+            total_length = self.num_soft_skills * self.prefix_length
+            repeats = (total_length + token_embeds.shape[0] - 1) // token_embeds.shape[0]
+            tiled = token_embeds.repeat((repeats, 1))[:total_length]
+            self.prefix_embeddings.copy_(
+                tiled.reshape(self.num_soft_skills, self.prefix_length, -1)
+            )
 
     def _with_prefix(self, input_ids, attention_mask, labels=None, prefix_insert_idx=None):
         batch_size = input_ids.shape[0]
         token_embeds = self.model.get_input_embeddings()(input_ids.to(self.device))
-        prefix = self.prefix_embeddings.unsqueeze(0).expand(batch_size, -1, -1)
+        flat_prefix = self.active_prefix_embeddings()
+        effective_prefix_length = int(flat_prefix.shape[0])
+        prefix = flat_prefix.unsqueeze(0).expand(batch_size, -1, -1)
         attention_mask = attention_mask.to(self.device)
         labels_on_device = labels.to(self.device) if labels is not None else None
         prefix_mask = self.torch.ones(
-            self.prefix_length,
+            effective_prefix_length,
             dtype=attention_mask.dtype,
             device=self.device,
         )
@@ -183,7 +233,7 @@ class SoftPrefixCausalLM:
             full_labels = None
             if labels_on_device is not None:
                 prefix_labels = self.torch.full(
-                    (batch_size, self.prefix_length),
+                    (batch_size, effective_prefix_length),
                     -100,
                     dtype=labels_on_device.dtype,
                     device=self.device,
@@ -202,7 +252,7 @@ class SoftPrefixCausalLM:
         prefix_labels_row = None
         if labels_on_device is not None:
             prefix_labels_row = self.torch.full(
-                (self.prefix_length,),
+                (effective_prefix_length,),
                 -100,
                 dtype=labels_on_device.dtype,
                 device=self.device,
@@ -244,10 +294,20 @@ class SoftPrefixCausalLM:
             labels,
             prefix_insert_idx=batch.get("prefix_insert_idx"),
         )
-        outputs = self.model(
-            inputs_embeds=inputs_embeds,
-            attention_mask=full_attention_mask,
-        )
+        logits_to_keep = _logits_to_keep_from_labels(self.torch, full_labels)
+        try:
+            outputs = self.model(
+                inputs_embeds=inputs_embeds,
+                attention_mask=full_attention_mask,
+                logits_to_keep=logits_to_keep,
+            )
+        except TypeError as exc:
+            if "logits_to_keep" not in str(exc):
+                raise
+            outputs = self.model(
+                inputs_embeds=inputs_embeds,
+                attention_mask=full_attention_mask,
+            )
         return SimpleNamespace(loss=_masked_causal_lm_loss(self.torch, outputs.logits, full_labels))
 
     def generate_from_prompt(
@@ -259,6 +319,8 @@ class SoftPrefixCausalLM:
         temperature: float = 0.0,
         use_prefix: bool = True,
         prefix_insert_idx: int | None = None,
+        stop_strings: list[str] | tuple[str, ...] | None = None,
+        use_cache: bool | None = None,
     ) -> str:
         encoded = self.tokenizer(
             prompt,
@@ -276,6 +338,11 @@ class SoftPrefixCausalLM:
             "pad_token_id": self.tokenizer.pad_token_id,
             "eos_token_id": self.tokenizer.eos_token_id,
         }
+        if use_cache is not None:
+            generate_kwargs["use_cache"] = bool(use_cache)
+        if stop_strings:
+            generate_kwargs["stop_strings"] = list(stop_strings)
+            generate_kwargs["tokenizer"] = self.tokenizer
         if use_prefix:
             inputs_embeds, full_attention_mask, _ = self._with_prefix(
                 input_ids,
@@ -367,6 +434,7 @@ class SoftPrefixVisionLM:
         model_name: str,
         *,
         prefix_length: int,
+        num_soft_skills: int = 2,
         init_text: str = "",
         init_strategy: str = "text",
         torch_dtype: str = "auto",
@@ -407,15 +475,27 @@ class SoftPrefixVisionLM:
                 resolved_device = "cpu"
             self.model = AutoVLM.from_pretrained(model_name, **model_kwargs).to(resolved_device)
 
+        if hasattr(self.model.config, "use_cache"):
+            self.model.config.use_cache = False
+
         self.model.eval()
         for param in self.model.parameters():
             param.requires_grad_(False)
 
         self.device = self.model.get_input_embeddings().weight.device
         self.prefix_length = int(prefix_length)
+        self.num_soft_skills = int(num_soft_skills)
+        if self.num_soft_skills < 1:
+            raise ValueError("num_soft_skills must be >= 1")
         hidden_size = self.model.get_input_embeddings().embedding_dim
         self.prefix_embeddings = torch.nn.Parameter(
-            torch.empty(self.prefix_length, hidden_size, device=self.device, dtype=self.model.dtype)
+            torch.empty(
+                self.num_soft_skills,
+                self.prefix_length,
+                hidden_size,
+                device=self.device,
+                dtype=self.model.dtype,
+            )
         )
         torch.nn.init.normal_(self.prefix_embeddings, mean=0.0, std=0.02)
         init_strategy = init_strategy.strip().lower()
@@ -432,14 +512,20 @@ class SoftPrefixVisionLM:
     def trainable_parameters(self):
         return [self.prefix_embeddings]
 
+    def active_prefix_embeddings(self):
+        return _flatten_prefix_embeddings(self.prefix_embeddings)
+
     def state_dict(self) -> dict[str, Any]:
         return {
             "prefix_embeddings": self.prefix_embeddings.detach().cpu(),
             "prefix_length": self.prefix_length,
+            "num_soft_skills": self.num_soft_skills,
         }
 
     def load_state_dict(self, state: dict[str, Any]) -> None:
         value = state["prefix_embeddings"].to(device=self.device, dtype=self.prefix_embeddings.dtype)
+        if value.dim() == 2 and tuple(value.shape) == tuple(self.prefix_embeddings.shape[1:]):
+            value = value.unsqueeze(0).expand_as(self.prefix_embeddings).clone()
         if tuple(value.shape) != tuple(self.prefix_embeddings.shape):
             raise ValueError(
                 f"prefix shape mismatch: checkpoint {tuple(value.shape)} vs model {tuple(self.prefix_embeddings.shape)}"
@@ -454,9 +540,12 @@ class SoftPrefixVisionLM:
             return
         with self.torch.no_grad():
             token_embeds = self.model.get_input_embeddings()(input_ids)[0].to(self.prefix_embeddings.dtype)
-            repeats = (self.prefix_length + token_embeds.shape[0] - 1) // token_embeds.shape[0]
-            tiled = token_embeds.repeat((repeats, 1))[: self.prefix_length]
-            self.prefix_embeddings.copy_(tiled)
+            total_length = self.num_soft_skills * self.prefix_length
+            repeats = (total_length + token_embeds.shape[0] - 1) // token_embeds.shape[0]
+            tiled = token_embeds.repeat((repeats, 1))[:total_length]
+            self.prefix_embeddings.copy_(
+                tiled.reshape(self.num_soft_skills, self.prefix_length, -1)
+            )
 
     def _embed_with_vision(self, batch: dict):
         input_ids = batch["input_ids"].to(self.device)
@@ -509,15 +598,16 @@ class SoftPrefixVisionLM:
 
         input_ids = batch["input_ids"].to(self.device)
         batch_size = input_ids.shape[0]
+        effective_prefix_length = int(self.active_prefix_embeddings().shape[0])
         prefix_ids = self.torch.full(
-            (batch_size, self.prefix_length),
+            (batch_size, effective_prefix_length),
             int(self.tokenizer.pad_token_id or 0),
             dtype=input_ids.dtype,
             device=self.device,
         )
         full_input_ids = self.torch.cat([prefix_ids, input_ids], dim=1)
         prefix_token_types = self.torch.zeros(
-            (batch_size, self.prefix_length),
+            (batch_size, effective_prefix_length),
             dtype=mm_token_type_ids.dtype,
             device=self.device,
         )
@@ -551,24 +641,57 @@ class SoftPrefixVisionLM:
             token_embeds = self.model.get_input_embeddings()(input_ids.to(self.device))
         else:
             token_embeds = self._embed_with_vision(batch)
-        prefix = self.prefix_embeddings.unsqueeze(0).expand(batch_size, -1, -1)
-        inputs_embeds = self.torch.cat([prefix, token_embeds], dim=1)
-        prefix_mask = self.torch.ones(
-            batch_size,
-            self.prefix_length,
+        flat_prefix = self.active_prefix_embeddings()
+        effective_prefix_length = int(flat_prefix.shape[0])
+        prefix = flat_prefix.unsqueeze(0).expand(batch_size, -1, -1)
+        prefix_mask_row = self.torch.ones(
+            effective_prefix_length,
             dtype=attention_mask.dtype,
             device=self.device,
         )
-        full_attention_mask = self.torch.cat([prefix_mask, attention_mask.to(self.device)], dim=1)
-        full_labels = None
-        if labels is not None:
-            prefix_labels = self.torch.full(
-                (batch_size, self.prefix_length),
-                -100,
-                dtype=labels.dtype,
-                device=self.device,
+        attention_mask = attention_mask.to(self.device)
+        labels_on_device = labels.to(self.device) if labels is not None else None
+        insert_indices = batch.get("prefix_insert_idx")
+        if insert_indices is None or use_native_vision:
+            inputs_embeds = self.torch.cat([prefix, token_embeds], dim=1)
+            prefix_mask = prefix_mask_row.unsqueeze(0).expand(batch_size, -1)
+            full_attention_mask = self.torch.cat([prefix_mask, attention_mask], dim=1)
+            full_labels = None
+            if labels_on_device is not None:
+                prefix_labels = self.torch.full(
+                    (batch_size, effective_prefix_length),
+                    -100,
+                    dtype=labels_on_device.dtype,
+                    device=self.device,
+                )
+                full_labels = self.torch.cat([prefix_labels, labels_on_device], dim=1)
+        else:
+            insert_indices = self.torch.as_tensor(insert_indices, device=self.device).view(-1)
+            if int(insert_indices.numel()) != batch_size:
+                raise ValueError("prefix_insert_idx must have one entry per batch row")
+            embed_rows = []
+            mask_rows = []
+            label_rows = [] if labels_on_device is not None else None
+            prefix_label_row = (
+                self.torch.full(
+                    (effective_prefix_length,),
+                    -100,
+                    dtype=labels_on_device.dtype,
+                    device=self.device,
+                )
+                if labels_on_device is not None
+                else None
             )
-            full_labels = self.torch.cat([prefix_labels, labels.to(self.device)], dim=1)
+            seq_len = int(input_ids.shape[1])
+            for row, raw_idx in enumerate(insert_indices.tolist()):
+                idx = max(0, min(int(raw_idx), seq_len))
+                embed_rows.append(self.torch.cat([token_embeds[row, :idx], prefix[row], token_embeds[row, idx:]], dim=0))
+                mask_rows.append(self.torch.cat([attention_mask[row, :idx], prefix_mask_row, attention_mask[row, idx:]], dim=0))
+                if label_rows is not None and prefix_label_row is not None:
+                    label_rows.append(self.torch.cat([labels_on_device[row, :idx], prefix_label_row, labels_on_device[row, idx:]], dim=0))
+            inputs_embeds = self.torch.stack(embed_rows)
+            full_attention_mask = self.torch.stack(mask_rows)
+            full_labels = self.torch.stack(label_rows) if label_rows is not None else None
         model_kwargs = {}
         if use_native_vision:
             model_kwargs = self._native_vision_kwargs(batch)
@@ -587,11 +710,22 @@ class SoftPrefixVisionLM:
             batch,
             labels=batch["labels"],
         )
-        outputs = self.model(
-            inputs_embeds=inputs_embeds,
-            attention_mask=full_attention_mask,
-            **model_kwargs,
-        )
+        logits_to_keep = _logits_to_keep_from_labels(self.torch, full_labels)
+        try:
+            outputs = self.model(
+                inputs_embeds=inputs_embeds,
+                attention_mask=full_attention_mask,
+                logits_to_keep=logits_to_keep,
+                **model_kwargs,
+            )
+        except TypeError as exc:
+            if "logits_to_keep" not in str(exc):
+                raise
+            outputs = self.model(
+                inputs_embeds=inputs_embeds,
+                attention_mask=full_attention_mask,
+                **model_kwargs,
+            )
         return SimpleNamespace(loss=_masked_causal_lm_loss(self.torch, outputs.logits, full_labels))
 
     def generate_from_messages(
@@ -603,6 +737,8 @@ class SoftPrefixVisionLM:
         temperature: float = 0.0,
         max_image_tokens: int = 0,
         use_prefix: bool = True,
+        stop_strings: list[str] | tuple[str, ...] | None = None,
+        use_cache: bool | None = None,
     ) -> str:
         try:
             from qwen_vl_utils import process_vision_info
@@ -616,6 +752,7 @@ class SoftPrefixVisionLM:
             messages,
             tokenize=False,
             add_generation_prompt=True,
+            enable_thinking=False,
         )
         patch_size = qwen_image_patch_size(self.processor)
         budgeted_messages = apply_docvqa_image_budget(
@@ -658,6 +795,11 @@ class SoftPrefixVisionLM:
             "pad_token_id": self.tokenizer.pad_token_id,
             "eos_token_id": self.tokenizer.eos_token_id,
         }
+        if use_cache is not None:
+            generate_kwargs["use_cache"] = bool(use_cache)
+        if stop_strings:
+            generate_kwargs["stop_strings"] = list(stop_strings)
+            generate_kwargs["tokenizer"] = self.tokenizer
         if use_prefix:
             inputs_embeds, full_attention_mask, _, model_kwargs = self._with_prefix(batch)
             generate_kwargs["inputs_embeds"] = inputs_embeds
@@ -681,6 +823,9 @@ class SoftPrefixVisionLM:
         max_new_tokens: int,
         temperature: float = 0.0,
         use_prefix: bool = True,
+        prefix_insert_idx: int | None = None,
+        stop_strings: list[str] | tuple[str, ...] | None = None,
+        use_cache: bool | None = None,
     ) -> str:
         encoded = self.tokenizer(
             prompt,
@@ -693,6 +838,8 @@ class SoftPrefixVisionLM:
             "input_ids": encoded["input_ids"].to(self.device),
             "attention_mask": encoded["attention_mask"].to(self.device),
         }
+        if prefix_insert_idx is not None:
+            batch["prefix_insert_idx"] = self.torch.tensor([prefix_insert_idx], device=self.device)
         do_sample = temperature > 0
         generate_kwargs = {
             "max_new_tokens": max_new_tokens,
@@ -700,6 +847,357 @@ class SoftPrefixVisionLM:
             "pad_token_id": self.tokenizer.pad_token_id,
             "eos_token_id": self.tokenizer.eos_token_id,
         }
+        if use_cache is not None:
+            generate_kwargs["use_cache"] = bool(use_cache)
+        if stop_strings:
+            generate_kwargs["stop_strings"] = list(stop_strings)
+            generate_kwargs["tokenizer"] = self.tokenizer
+        if use_prefix:
+            inputs_embeds, full_attention_mask, _, model_kwargs = self._with_prefix(batch)
+            generate_kwargs["inputs_embeds"] = inputs_embeds
+            generate_kwargs["attention_mask"] = full_attention_mask
+            generate_kwargs.update(model_kwargs)
+        else:
+            generate_kwargs.update(batch)
+        if do_sample:
+            generate_kwargs["temperature"] = temperature
+        with self.torch.no_grad():
+            output_ids = self.model.generate(**generate_kwargs)
+        if not use_prefix:
+            output_ids = output_ids[:, batch["input_ids"].shape[1]:]
+        return self.tokenizer.decode(output_ids[0], skip_special_tokens=True).strip()
+
+
+class ResidualPromptMLP:
+    """Factory for the bottleneck residual reparameterizer from Residual Prompt Tuning."""
+
+    @staticmethod
+    def build(torch, embedding_dim: int, bottleneck_size: int):
+        if int(bottleneck_size) < 1:
+            raise ValueError("residual MLP bottleneck_size must be >= 1")
+        module = torch.nn.Sequential(
+            torch.nn.Linear(embedding_dim, int(bottleneck_size)),
+            torch.nn.ReLU(),
+            torch.nn.Linear(int(bottleneck_size), embedding_dim),
+            torch.nn.LayerNorm(embedding_dim),
+        )
+        # Start from Phi(P) = P exactly. The down projection remains normally
+        # initialized; the zero up projection lets the residual branch grow
+        # smoothly without destroying the Markdown embedding initialization.
+        torch.nn.init.zeros_(module[2].weight)
+        torch.nn.init.zeros_(module[2].bias)
+        torch.nn.init.ones_(module[3].weight)
+        torch.nn.init.zeros_(module[3].bias)
+        return module
+
+    @staticmethod
+    def apply(module, prompt):
+        return prompt + module(prompt)
+
+
+def _module_state_to_cpu(module) -> dict[str, Any]:
+    return {
+        name: value.detach().cpu()
+        for name, value in module.state_dict().items()
+    }
+
+
+class TaskSpecificMultiPrefixVisionLM(SoftPrefixVisionLM):
+    """One independent multi-prefix parameter per task, with no cross-task sharing."""
+
+    def __init__(
+        self,
+        model_name: str,
+        *,
+        prefix_length: int,
+        num_soft_skills: int,
+        task_init_texts: dict[str, str],
+        residual_bottleneck_size: int = 400,
+        use_residual_reparameterization: bool = True,
+        torch_dtype: str = "auto",
+        device: str = "auto",
+        trust_remote_code: bool = False,
+    ) -> None:
+        if not task_init_texts:
+            raise ValueError("task_init_texts must contain at least one task")
+        first_text = next(iter(task_init_texts.values()))
+        super().__init__(
+            model_name,
+            prefix_length=prefix_length,
+            num_soft_skills=num_soft_skills,
+            init_text=first_text,
+            init_strategy="text",
+            torch_dtype=torch_dtype,
+            device=device,
+            trust_remote_code=trust_remote_code,
+        )
+        initial_parameter = self.prefix_embeddings
+        self.task_prefix_embeddings = self.torch.nn.ParameterDict()
+        self.task_residual_mlps = self.torch.nn.ModuleDict()
+        self.use_residual_reparameterization = bool(use_residual_reparameterization)
+        embedding_dim = int(initial_parameter.shape[-1])
+        for index, (task_name, text) in enumerate(task_init_texts.items()):
+            if index == 0:
+                parameter = initial_parameter
+            else:
+                parameter = self.torch.nn.Parameter(self.torch.empty_like(initial_parameter))
+                self.torch.nn.init.normal_(parameter, mean=0.0, std=0.02)
+                self._initialize_multi_prefix_from_text(parameter, text)
+            self.task_prefix_embeddings[str(task_name)] = parameter
+            if self.use_residual_reparameterization:
+                self.task_residual_mlps[str(task_name)] = ResidualPromptMLP.build(
+                    self.torch,
+                    embedding_dim,
+                    residual_bottleneck_size,
+                ).to(device=self.device, dtype=parameter.dtype)
+        self.active_task = next(iter(self.task_prefix_embeddings))
+        self.residual_bottleneck_size = int(residual_bottleneck_size)
+
+    def _initialize_multi_prefix_from_text(self, parameter, text: str) -> None:
+        encoded = self.tokenizer(text, add_special_tokens=False, return_tensors="pt")
+        input_ids = encoded["input_ids"].to(self.device)
+        if input_ids.numel() == 0:
+            return
+        with self.torch.no_grad():
+            token_embeds = self.model.get_input_embeddings()(input_ids)[0].to(parameter.dtype)
+            total_length = self.num_soft_skills * self.prefix_length
+            repeats = (total_length + token_embeds.shape[0] - 1) // token_embeds.shape[0]
+            parameter.copy_(
+                token_embeds.repeat((repeats, 1))[:total_length].reshape_as(parameter)
+            )
+
+    def set_active_task(self, task_name: str) -> None:
+        if task_name not in self.task_prefix_embeddings:
+            raise KeyError(f"unknown task prefix: {task_name!r}")
+        self.active_task = task_name
+
+    def active_prefix_embeddings(self):
+        prompt = _flatten_prefix_embeddings(self.task_prefix_embeddings[self.active_task])
+        if not self.use_residual_reparameterization:
+            return prompt
+        return ResidualPromptMLP.apply(self.task_residual_mlps[self.active_task], prompt)
+
+    def trainable_parameters(self):
+        return (
+            list(self.task_prefix_embeddings.values())
+            + list(self.task_residual_mlps.parameters())
+        )
+
+    def state_dict(self) -> dict[str, Any]:
+        return {
+            "task_prefix_embeddings": {
+                name: parameter.detach().cpu()
+                for name, parameter in self.task_prefix_embeddings.items()
+            },
+            "task_residual_mlps": {
+                name: _module_state_to_cpu(module)
+                for name, module in self.task_residual_mlps.items()
+            },
+            "prefix_length": self.prefix_length,
+            "num_soft_skills": self.num_soft_skills,
+            "residual_bottleneck_size": self.residual_bottleneck_size,
+            "use_residual_reparameterization": self.use_residual_reparameterization,
+            "active_task": self.active_task,
+        }
+
+    def load_state_dict(self, state: dict[str, Any]) -> None:
+        task_state = state["task_prefix_embeddings"]
+        if set(task_state) != set(self.task_prefix_embeddings):
+            raise ValueError("task prefix checkpoint keys do not match configured tasks")
+        with self.torch.no_grad():
+            for name, parameter in self.task_prefix_embeddings.items():
+                value = task_state[name].to(device=self.device, dtype=parameter.dtype)
+                if tuple(value.shape) != tuple(parameter.shape):
+                    raise ValueError(f"task prefix shape mismatch for {name!r}")
+                parameter.copy_(value)
+        if self.use_residual_reparameterization:
+            mlp_state = state["task_residual_mlps"]
+            if set(mlp_state) != set(self.task_residual_mlps):
+                raise ValueError("task residual MLP checkpoint keys do not match configured tasks")
+            for name, module in self.task_residual_mlps.items():
+                module.load_state_dict(mlp_state[name])
+        self.set_active_task(str(state.get("active_task", self.active_task)))
+
+
+class SharedTaskSoftPrefixVisionLM(SoftPrefixVisionLM):
+    """One shared prefix plus one Markdown-initialized prefix per task."""
+
+    def __init__(
+        self,
+        model_name: str,
+        *,
+        prefix_length: int,
+        shared_init_text: str,
+        task_init_texts: dict[str, str],
+        residual_bottleneck_size: int = 400,
+        use_residual_reparameterization: bool = True,
+        torch_dtype: str = "auto",
+        device: str = "auto",
+        trust_remote_code: bool = False,
+    ) -> None:
+        super().__init__(
+            model_name,
+            prefix_length=prefix_length,
+            num_soft_skills=1,
+            init_text=shared_init_text,
+            init_strategy="text",
+            torch_dtype=torch_dtype,
+            device=device,
+            trust_remote_code=trust_remote_code,
+        )
+        if not task_init_texts:
+            raise ValueError("task_init_texts must contain at least one task")
+        self.task_prefix_embeddings = {}
+        embedding_dim = int(self.prefix_embeddings.shape[-1])
+        self.use_residual_reparameterization = bool(use_residual_reparameterization)
+        if self.use_residual_reparameterization:
+            self.shared_residual_mlp = ResidualPromptMLP.build(
+                self.torch,
+                embedding_dim,
+                residual_bottleneck_size,
+            ).to(device=self.device, dtype=self.prefix_embeddings.dtype)
+        self.task_residual_mlps = self.torch.nn.ModuleDict()
+        for task_name, text in task_init_texts.items():
+            parameter = self.torch.nn.Parameter(self.torch.empty_like(self.prefix_embeddings[0]))
+            self.torch.nn.init.normal_(parameter, mean=0.0, std=0.02)
+            self._initialize_parameter_from_text(parameter, text)
+            self.task_prefix_embeddings[str(task_name)] = parameter
+            if self.use_residual_reparameterization:
+                self.task_residual_mlps[str(task_name)] = ResidualPromptMLP.build(
+                    self.torch,
+                    embedding_dim,
+                    residual_bottleneck_size,
+                ).to(device=self.device, dtype=parameter.dtype)
+        self.active_task = next(iter(self.task_prefix_embeddings))
+        self.residual_bottleneck_size = int(residual_bottleneck_size)
+
+    def _initialize_parameter_from_text(self, parameter, text: str) -> None:
+        encoded = self.tokenizer(text, add_special_tokens=False, return_tensors="pt")
+        input_ids = encoded["input_ids"].to(self.device)
+        if input_ids.numel() == 0:
+            return
+        with self.torch.no_grad():
+            token_embeds = self.model.get_input_embeddings()(input_ids)[0].to(parameter.dtype)
+            repeats = (self.prefix_length + token_embeds.shape[0] - 1) // token_embeds.shape[0]
+            parameter.copy_(token_embeds.repeat((repeats, 1))[: self.prefix_length])
+
+    def set_active_task(self, task_name: str) -> None:
+        if task_name not in self.task_prefix_embeddings:
+            raise KeyError(f"unknown task prefix: {task_name!r}")
+        self.active_task = task_name
+
+    def active_prefix_embeddings(self):
+        shared = _flatten_prefix_embeddings(self.prefix_embeddings)
+        task = self.task_prefix_embeddings[self.active_task]
+        if not self.use_residual_reparameterization:
+            return self.torch.cat([shared, task], dim=0)
+        shared = ResidualPromptMLP.apply(self.shared_residual_mlp, shared)
+        task = ResidualPromptMLP.apply(self.task_residual_mlps[self.active_task], task)
+        return self.torch.cat([shared, task], dim=0)
+
+    def shared_parameters(self):
+        parameters = [self.prefix_embeddings]
+        if self.use_residual_reparameterization:
+            parameters += list(self.shared_residual_mlp.parameters())
+        return parameters
+
+    def task_parameters(self):
+        return (
+            list(self.task_prefix_embeddings.values())
+            + list(self.task_residual_mlps.parameters())
+        )
+
+    def trainable_parameters(self):
+        return self.shared_parameters() + self.task_parameters()
+
+    def state_dict(self) -> dict[str, Any]:
+        state = {
+            "shared_prefix_embeddings": self.prefix_embeddings.detach().cpu(),
+            "task_prefix_embeddings": {
+                name: parameter.detach().cpu()
+                for name, parameter in self.task_prefix_embeddings.items()
+            },
+            "task_residual_mlps": {
+                name: _module_state_to_cpu(module)
+                for name, module in self.task_residual_mlps.items()
+            },
+            "prefix_length": self.prefix_length,
+            "residual_bottleneck_size": self.residual_bottleneck_size,
+            "use_residual_reparameterization": self.use_residual_reparameterization,
+            "active_task": self.active_task,
+        }
+        if self.use_residual_reparameterization:
+            state["shared_residual_mlp"] = _module_state_to_cpu(self.shared_residual_mlp)
+        return state
+
+    def load_state_dict(self, state: dict[str, Any]) -> None:
+        shared = state["shared_prefix_embeddings"].to(
+            device=self.device,
+            dtype=self.prefix_embeddings.dtype,
+        )
+        if shared.dim() == 2:
+            shared = shared.unsqueeze(0)
+        if tuple(shared.shape) != tuple(self.prefix_embeddings.shape):
+            raise ValueError(
+                f"shared prefix shape mismatch: {tuple(shared.shape)} vs "
+                f"{tuple(self.prefix_embeddings.shape)}"
+            )
+        task_state = state["task_prefix_embeddings"]
+        if set(task_state) != set(self.task_prefix_embeddings):
+            raise ValueError("task prefix checkpoint keys do not match configured tasks")
+        with self.torch.no_grad():
+            self.prefix_embeddings.copy_(shared)
+            for name, parameter in self.task_prefix_embeddings.items():
+                value = task_state[name].to(device=self.device, dtype=parameter.dtype)
+                if tuple(value.shape) != tuple(parameter.shape):
+                    raise ValueError(f"task prefix shape mismatch for {name!r}")
+                parameter.copy_(value)
+        if self.use_residual_reparameterization:
+            self.shared_residual_mlp.load_state_dict(state["shared_residual_mlp"])
+            mlp_state = state["task_residual_mlps"]
+            if set(mlp_state) != set(self.task_residual_mlps):
+                raise ValueError("task residual MLP checkpoint keys do not match configured tasks")
+            for name, module in self.task_residual_mlps.items():
+                module.load_state_dict(mlp_state[name])
+        self.set_active_task(str(state.get("active_task", self.active_task)))
+
+    def generate_from_prompt(
+        self,
+        prompt: str,
+        *,
+        max_prompt_tokens: int,
+        max_new_tokens: int,
+        temperature: float = 0.0,
+        use_prefix: bool = True,
+        prefix_insert_idx: int | None = None,
+        stop_strings: list[str] | tuple[str, ...] | None = None,
+        use_cache: bool | None = None,
+    ) -> str:
+        encoded = self.tokenizer(
+            prompt,
+            add_special_tokens=False,
+            truncation=True,
+            max_length=max_prompt_tokens,
+            return_tensors="pt",
+        )
+        batch = {
+            "input_ids": encoded["input_ids"].to(self.device),
+            "attention_mask": encoded["attention_mask"].to(self.device),
+        }
+        if prefix_insert_idx is not None:
+            batch["prefix_insert_idx"] = self.torch.tensor([prefix_insert_idx], device=self.device)
+        do_sample = temperature > 0
+        generate_kwargs = {
+            "max_new_tokens": max_new_tokens,
+            "do_sample": do_sample,
+            "pad_token_id": self.tokenizer.pad_token_id,
+            "eos_token_id": self.tokenizer.eos_token_id,
+        }
+        if use_cache is not None:
+            generate_kwargs["use_cache"] = bool(use_cache)
+        if stop_strings:
+            generate_kwargs["stop_strings"] = list(stop_strings)
+            generate_kwargs["tokenizer"] = self.tokenizer
         if use_prefix:
             inputs_embeds, full_attention_mask, _, model_kwargs = self._with_prefix(batch)
             generate_kwargs["inputs_embeds"] = inputs_embeds

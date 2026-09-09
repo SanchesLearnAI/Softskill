@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "model_name": "Qwen/Qwen3.5-4B",
+  "tokenizer": "Qwen/Qwen3.5-4B",
+  "add_special_tokens": false,
+  "selected_length": 16,
+  "whitespace_policy": "The loader applies Python str.strip() before tokenization.",
+  "files": {
+    "shared_behavior.md": {
+      "raw_text": "Find strongest evidence, check answer constraints, and output only the exact supported answer.",
+      "source_token_ids": [9592, 28928, 5721, 11, 1716, 4087, 16484, 11, 321, 2468, 1132, 279, 4581, 7021, 4087, 13],
+      "source_token_count": 16,
+      "selected_token_ids": [9592, 28928, 5721, 11, 1716, 4087, 16484, 11, 321, 2468, 1132, 279, 4581, 7021, 4087, 13],
+      "selected_token_count": 16,
+      "selected_text": "Find strongest evidence, check answer constraints, and output only the exact supported answer.",
+      "repeated": false,
+      "truncated": false
+    },
+    "searchqa_behavior.md": {
+      "raw_text": "Filter noise; verify entity and relation direction; return the shortest unambiguous answer.",
+      "source_token_ids": [5455, 11639, 26, 9845, 5219, 321, 12323, 4944, 26, 460, 279, 37847, 632, 87110, 4087, 13],
+      "source_token_count": 16,
+      "selected_token_ids": [5455, 11639, 26, 9845, 5219, 321, 12323, 4944, 26, 460, 279, 37847, 632, 87110, 4087, 13],
+      "selected_token_count": 16,
+      "selected_text": "Filter noise; verify entity and relation direction; return the shortest unambiguous answer.",
+      "repeated": false,
+      "truncated": false
+    },
+    "livemath_behavior.md": {
+      "raw_text": "Compare options: assumptions, quantifiers, endpoints, strength; choose strongest valid.",
+      "source_token_ids": [26487, 2519, 25, 30800, 11, 9966, 11497, 11, 35141, 11, 7913, 26, 4992, 28928, 2610, 13],
+      "source_token_count": 16,
+      "selected_token_ids": [26487, 2519, 25, 30800, 11, 9966, 11497, 11, 35141, 11, 7913, 26, 4992, 28928, 2610, 13],
+      "selected_token_count": 16,
+      "selected_text": "Compare options: assumptions, quantifiers, endpoints, strength; choose strongest valid.",
+      "repeated": false,
+      "truncated": false
+    },
+    "docvqa_behavior.md": {
+      "raw_text": "Use labels and spatial layout to locate fields; copy the smallest exact document span.",
+      "source_token_ids": [9947, 8928, 321, 27073, 6576, 310, 23748, 4881, 26, 2880, 279, 23856, 4581, 2128, 9111, 13],
+      "source_token_count": 16,
+      "selected_token_ids": [9947, 8928, 321, 27073, 6576, 310, 23748, 4881, 26, 2880, 279, 23856, 4581, 2128, 9111, 13],
+      "selected_token_count": 16,
+      "selected_text": "Use labels and spatial layout to locate fields; copy the smallest exact document span.",
+      "repeated": false,
+      "truncated": false
+    }
+  }
+}

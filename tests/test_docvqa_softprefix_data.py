@@ -1,7 +1,54 @@
-"""Tests for DocVQA soft-prefix image budgeting."""
+"""Tests for the canonical DocVQA soft-prefix prompt and image budgeting."""
 from __future__ import annotations
 
-from skillopt.softprefix.data import apply_docvqa_image_budget, resolve_docvqa_image_token_budget
+import sys
+import types
+from pathlib import Path
+
+from skillopt.softprefix.data import (
+    DocVQAPrefixDataset,
+    apply_docvqa_image_budget,
+    build_docvqa_messages,
+    resolve_docvqa_image_token_budget,
+)
+
+
+def test_docvqa_messages_match_rollout_question_then_image_order(tmp_path: Path) -> None:
+    image_path = tmp_path / "document.png"
+    image_path.write_bytes(b"not-decoded-by-this-test")
+
+    messages = build_docvqa_messages(
+        {"id": "doc-1", "question": "What is the invoice number?", "image_path": str(image_path)}
+    )
+
+    user_content = messages[1]["content"]
+    assert [part["type"] for part in user_content] == ["text", "image"]
+    assert user_content[0]["text"].startswith("What is the invoice number?")
+
+
+def test_docvqa_training_chat_template_disables_thinking(monkeypatch) -> None:
+    captured = {}
+    monkeypatch.setitem(
+        sys.modules,
+        "qwen_vl_utils",
+        types.SimpleNamespace(process_vision_info=lambda *args, **kwargs: ([], [])),
+    )
+
+    class Processor:
+        def apply_chat_template(self, messages, **kwargs):
+            captured["messages"] = messages
+            captured["kwargs"] = kwargs
+            return "rendered"
+
+        def __call__(self, **kwargs):
+            del kwargs
+            return {"input_ids": [[1]], "attention_mask": [[1]]}
+
+    dataset = object.__new__(DocVQAPrefixDataset)
+    dataset.processor = Processor()
+    dataset._encode_prompt([{"role": "user", "content": []}])
+
+    assert captured["kwargs"]["enable_thinking"] is False
 
 
 def test_auto_docvqa_image_budget_leaves_room_for_text() -> None:

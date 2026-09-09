@@ -35,6 +35,9 @@ def project_prefix_via_vocab(
         raise ValueError("top_k must be >= 0")
 
     source_prefix = torch.as_tensor(source_prefix, dtype=torch.float32)
+    source_prefix_shape = tuple(source_prefix.shape)
+    if source_prefix.ndim == 3:
+        source_prefix = source_prefix.flatten(0, 1)
     source_embeddings = torch.as_tensor(source_embeddings, dtype=torch.float32)
     target_dtype = getattr(target_embeddings, "dtype", torch.float32)
     target_embeddings = torch.as_tensor(target_embeddings, dtype=torch.float32)
@@ -74,4 +77,7 @@ def project_prefix_via_vocab(
 
     weights = torch.softmax(logits, dim=-1)
     projected = weights @ target_embeddings
-    return projected.to(dtype=target_dtype)
+    projected = projected.to(dtype=target_dtype)
+    if len(source_prefix_shape) == 3:
+        projected = projected.reshape(source_prefix_shape[0], source_prefix_shape[1], -1)
+    return projected
